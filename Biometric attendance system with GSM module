@@ -1,0 +1,180 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_Fingerprint.h>
+#include <SoftwareSerial.h>
+
+SoftwareSerial gsmModule(10, 11); // RX, TX for GSM module
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+#define OLED_RESET -1 // Reset pin # (or -1 if not used)
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&Serial1);
+
+const char* phoneNumbers[] = {
+  "+918870428899", // Phone number for ID 1
+  "+918870428899",   // Phone number for ID 2
+  "+918870428899",   // Phone number for ID 3
+  "+4567890123",   // Phone number for ID 4
+  "+5678901234"    // Phone number for ID 5
+};
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.display();
+  delay(2000);
+
+  finger.begin(57600);
+  delay(5);
+
+  gsmModule.begin(9600);
+  delay(2000);
+  gsmModule.println("AT");
+  delay(1000);
+  while (gsmModule.available()) {
+    Serial.write(gsmModule.read());
+  }
+  gsmModule.println("AT+CMGF=1");
+  delay(1000);
+  while (gsmModule.available()) {
+    Serial.write(gsmModule.read());
+  }
+
+  if (finger.verifyPassword()) {
+    Serial.println("Found fingerprint sensor!");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("Fingerprint Sensor Found!");
+    display.display();
+  } else {
+    Serial.println("Did not find fingerprint sensor :(");
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+    display.setCursor(0, 0);
+    display.println("Fingerprint Sensor Not Found");
+    display.display();
+    while (1);
+  }
+
+  enrollFingerprints();
+}
+
+void loop() {
+  recognizeFingerprint();
+  delay(1000); // Add a delay between fingerprint scans
+}
+
+void enrollFingerprints() {
+  for (uint16_t id = 1; id <= 3; ++id) {
+    enrollFingerprint(id);
+    delay(5000); // Delay between enrolling fingerprints (5 seconds)
+  }
+}
+
+void enrollFingerprint(uint16_t fingerprintID) {
+  uint8_t p = -1;
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.print("Enrolling Fingerprint ID: ");
+  display.println(fingerprintID);
+  display.display();
+  delay(2000);
+
+  while (p != FINGERPRINT_OK) {
+    p = finger.getImage();
+    if (p != FINGERPRINT_OK) {
+      Serial.println("Failed to scan fingerprint, please retry...");
+      display.clearDisplay();
+      display.setCursor(0, 20);
+      display.println("Failed to scan fingerprint");
+      display.display();
+      delay(2000);
+    }
+  }
+
+  p = finger.image2Tz(1);
+  if (p == FINGERPRINT_OK) {
+    Serial.println("Fingerprint scanned successfully.");
+    display.clearDisplay();
+    display.setCursor(0, 20);
+    display.println("Fingerprint scanned");
+    display.display();
+    delay(2000);
+
+    if (finger.storeModel(fingerprintID) == FINGERPRINT_OK) {
+      Serial.println("Fingerprint enrolled successfully.");
+      display.clearDisplay();
+      display.setCursor(0, 30);
+      display.println("Fingerprint enrolled");
+      display.display();
+      sendGSMMessage(phoneNumbers[fingerprintID - 1], "Fingerprint ID " + String(fingerprintID) + " enrolled.");
+    } else {
+      Serial.println("Enrollment failed, please try again...");
+      display.clearDisplay();
+      display.setCursor(0, 20);
+      display.println("Enrollment failed");
+      display.display();
+      delay(2000);
+    }
+  }
+}
+
+void recognizeFingerprint() {
+  uint8_t p = -1;
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Place registered fingerprint");
+  display.display();
+
+  while (p != FINGERPRINT_OK) {
+    p = finger.getImage();
+    if (p == FINGERPRINT_OK) {
+      p = finger.image2Tz();
+      if (p == FINGERPRINT_OK) {
+        p = finger.fingerFastSearch();
+        if (p == FINGERPRINT_OK) {
+          uint16_t id = finger.fingerID;
+          display.clearDisplay();
+          display.setCursor(0, 20);
+          display.println("Fingerprint recognized for ID " + String(id));
+          display.display();
+          sendGSMMessage(phoneNumbers[id - 1], "Fingerprint recognized for ID " + String(id));
+          delay(5000); // Display recognized fingerprint for 5 seconds
+        } else {
+          display.clearDisplay();
+          display.setCursor(0, 20);
+          display.println("Fingerprint not recognized");
+          display.display();
+          delay(2000);
+        }
+      }
+    }
+  }
+}
+
+void sendGSMMessage(const char* phoneNumber, const String& message) {
+  gsmModule.println("AT+CMGS=\"" + String(phoneNumber) + "\"");
+  delay(1000);
+  gsmModule.println(message);
+  delay(100);
+  gsmModule.println((char)26);
+  delay(1000);
+  while (gsmModule.available()) {
+    Serial.write(gsmModule.read());
+  }
+}
